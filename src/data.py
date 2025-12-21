@@ -58,7 +58,7 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     non_feature_keywords = [
         'flow id', 'flowid', 'source ip', 'src ip', 'destination ip', 'dst ip',
         'timestamp', 'time', 'source port', 'src port', 'destination port', 'dst port',
-        'protocol', 'label', 'source_file'
+        'protocol', 'label'
     ]
     
     cols_to_drop = []
@@ -67,6 +67,8 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
         if any(keyword in col_lower for keyword in non_feature_keywords):
             if col_lower != 'label':  # Keep label for now, drop later
                 cols_to_drop.append(col)
+    
+    # Keep source_file for splitting, but don't include it in features
     
     if cols_to_drop:
         print(f"Dropping non-feature columns: {cols_to_drop}")
@@ -102,7 +104,7 @@ def create_binary_target(df: pd.DataFrame) -> pd.Series:
     return y
 
 
-def split_by_file(df: pd.DataFrame, file_mapping: List[str]) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def split_data_by_file(df: pd.DataFrame, file_mapping: List[str]) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Split data by file: train on Mon-Thu, test on Friday Morning."""
     # Test set: only Friday-WorkingHours-Morning (other Friday files excluded for now)
     friday_test_files = [
@@ -169,7 +171,7 @@ def load_and_prepare_data(
         )
     else:
         print("Using file-based split...")
-        train_df, test_df = split_by_file(df, file_mapping)
+        train_df, test_df = split_data_by_file(df, file_mapping)
     
     # Prepare features and targets
     X_train, y_train, scaler, feature_names = prepare_features_and_target(

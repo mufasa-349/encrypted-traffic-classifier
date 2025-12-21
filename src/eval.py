@@ -10,9 +10,13 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 
-from data import load_and_prepare_data
-from model import create_model
-from utils import calculate_metrics, plot_confusion_matrix, print_metrics
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from src.data import load_and_prepare_data
+from src.model import create_model
+from src.utils import calculate_metrics, plot_confusion_matrix, print_metrics
 
 
 class TrafficDataset(Dataset):
@@ -102,13 +106,13 @@ def main():
     print("=" * 60)
     
     # We need to load data the same way as training
-    from data import load_all_csvs, clean_data, create_binary_target, prepare_features_and_target, split_by_file
+    from src.data import load_all_csvs, clean_data, create_binary_target, prepare_features_and_target, split_data_by_file
     
     df, file_mapping = load_all_csvs(args.data_dir)
     df = clean_data(df)
     
     # Use file-based split (same as training)
-    train_df, test_df = split_by_file(df, file_mapping)
+    train_df, test_df = split_data_by_file(df, file_mapping)
     
     # Prepare test features
     X_test, y_test, _, _ = prepare_features_and_target(

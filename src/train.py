@@ -11,9 +11,13 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 from sklearn.model_selection import train_test_split
 
-from data import load_and_prepare_data
-from model import create_model
-from utils import set_seed, calculate_metrics, plot_confusion_matrix, print_metrics
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from src.data import load_and_prepare_data
+from src.model import create_model
+from src.utils import set_seed, calculate_metrics, plot_confusion_matrix, print_metrics
 
 
 class TrafficDataset(Dataset):
@@ -158,7 +162,12 @@ def main():
     )
     
     # Create model
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+    elif torch.backends.mps.is_available():
+        device = torch.device('mps')
+    else:
+        device = torch.device('cpu')
     print(f"Using device: {device}")
     
     model = create_model(num_features=X_train.shape[1], device=device)
@@ -168,7 +177,8 @@ def main():
     # Calculate pos_weight for class imbalance
     pos_weight = torch.tensor(
         (y_train_split == 0).sum() / (y_train_split == 1).sum(),
-        device=device
+        device=device,
+        dtype=torch.float32
     )
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
