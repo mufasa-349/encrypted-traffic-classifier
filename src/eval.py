@@ -128,7 +128,12 @@ def main():
     )
     
     # Create model
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+    elif torch.backends.mps.is_available():
+        device = torch.device('mps')
+    else:
+        device = torch.device('cpu')
     print(f"Using device: {device}")
     
     model = create_model(num_features=len(feature_names), device=device)
@@ -140,7 +145,8 @@ def main():
     # Loss function
     pos_weight = torch.tensor(
         (y_test == 0).sum() / (y_test == 1).sum(),
-        device=device
+        device=device,
+        dtype=torch.float32
     )
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     
