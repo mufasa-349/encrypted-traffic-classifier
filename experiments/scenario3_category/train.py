@@ -7,10 +7,12 @@ Senaryo 3: 6 sınıflı MLP eğitimi.
 import argparse
 import json
 from pathlib import Path
+from typing import List
 
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from sklearn.metrics import classification_report, confusion_matrix
 from torch.utils.data import DataLoader, Dataset
 
@@ -27,24 +29,45 @@ class NPDataset(Dataset):
         return self.X[idx], self.y[idx]
 
 
-class MLP(nn.Module):
-    def __init__(self, in_dim: int, num_classes: int = 6, p: float = 0.4):
+class FocalLoss(nn.Module):
+    """Focal Loss for imbalanced classification - zor örnekleri daha fazla vurgular"""
+    def __init__(self, alpha=None, gamma=2.0, reduction='mean'):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(in_dim, 256),
-            nn.BatchNorm1d(256),  # Batch normalization eklendi
-            nn.ReLU(),
-            nn.Dropout(p),
-            nn.Linear(256, 128),
-            nn.BatchNorm1d(128),  # Batch normalization eklendi
-            nn.ReLU(),
-            nn.Dropout(p),
-            nn.Linear(128, 64),
-            nn.BatchNorm1d(64),  # Batch normalization eklendi
-            nn.ReLU(),
-            nn.Dropout(p * 0.75),
-            nn.Linear(64, num_classes),
-        )
+        self.alpha = alpha  # Class weights
+        self.gamma = gamma  # Focusing parameter (yüksek = zor örneklere daha fazla odaklan)
+        self.reduction = reduction
+    
+    def forward(self, inputs, targets):
+        ce_loss = F.cross_entropy(inputs, targets, weight=self.alpha, reduction='none')
+        pt = torch.exp(-ce_loss)
+        focal_loss = ((1 - pt) ** self.gamma) * ce_loss
+        
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        elif self.reduction == 'sum':
+            return focal_loss.sum()
+        else:
+            return focal_loss
+
+
+class MLP(nn.Module):
+    def __init__(self, in_dim: int, num_classes: int = 6, p: float = 0.4, hidden_dims: List[int] = None):
+        super().__init__()
+        if hidden_dims is None:
+            hidden_dims = [256, 128, 64]  # Default architecture
+        
+        layers = []
+        prev_dim = in_dim
+        
+        for i, hidden_dim in enumerate(hidden_dims):
+            layers.append(nn.Linear(prev_dim, hidden_dim))
+            layers.append(nn.BatchNorm1d(hidden_dim))
+            layers.append(nn.ReLU())
+            layers.append(nn.Dropout(p if i < len(hidden_dims) - 1 else p * 0.75))
+            prev_dim = hidden_dim
+        
+        layers.append(nn.Linear(prev_dim, num_classes))
+        self.net = nn.Sequential(*layers)
 
     def forward(self, x):
         return self.net(x)
@@ -130,6 +153,9 @@ def main():
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--early-stopping", type=int, default=15, help="Patience for early stopping (0 = disabled)")
     parser.add_argument("--normalize-weights", action="store_true", help="Normalize class weights (max=5.0)")
+    parser.add_argument("--use-focal-loss", action="store_true", help="Use Focal Loss instead of CrossEntropy (better for imbalanced data)")
+    parser.add_argument("--focal-gamma", type=float, default=2.0, help="Focal Loss gamma parameter (higher = more focus on hard examples)")
+    parser.add_argument("--hidden-dims", type=str, default="256,128,64", help="Hidden layer dimensions (comma-separated, e.g., '512,256,128')")
     args = parser.parse_args()
 
     art_dir = Path(args.artifacts_dir)
@@ -195,7 +221,9 @@ def main():
     print(f"  ✓ Test batches:  {len(test_loader)}")
 
     print(f"\n🧠 MODEL OLUŞTURULUYOR...")
-    model = MLP(in_dim=X_train.shape[1], num_classes=len(str_to_int)).to(device)
+    # Hidden dimensions parse et
+    hidden_dims = [int(d.strip()) for d in args.hidden_dims.split(',')]
+    model = MLP(in_dim=X_train.shape[1], num_classes=len(str_to_int), hidden_dims=hidden_dims).to(device)
     
     # Model parametre sayısı
     total_params = sum(p.numel() for p in model.parameters())
@@ -223,7 +251,15 @@ def main():
             print(f"      {int_to_str[i]:15s}: {w:.4f}")
     
     weight_tensor = torch.tensor(class_weights, dtype=torch.float32, device=device)
-    criterion = nn.CrossEntropyLoss(weight=weight_tensor)
+    
+    # Loss seçimi: Focal Loss veya CrossEntropy
+    if args.use_focal_loss:
+        criterion = FocalLoss(alpha=weight_tensor, gamma=args.focal_gamma)
+        print(f"  ✓ Loss: Focal Loss (gamma={args.focal_gamma})")
+    else:
+        criterion = nn.CrossEntropyLoss(weight=weight_tensor)
+        print(f"  ✓ Loss: Weighted CrossEntropyLoss")
+    
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     
     # Learning rate scheduler ekle
@@ -231,9 +267,9 @@ def main():
         optimizer, mode='max', factor=0.5, patience=3, min_lr=1e-6
     )
     
-    print(f"  ✓ Loss: Weighted CrossEntropyLoss")
     print(f"  ✓ Optimizer: Adam (lr={args.lr}, weight_decay={args.weight_decay})")
     print(f"  ✓ Scheduler: ReduceLROnPlateau (patience=3, factor=0.5)")
+    print(f"  ✓ Hidden dims: {hidden_dims}")
 
     best_acc = 0.0
     best_epoch = 0
