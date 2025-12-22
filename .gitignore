@@ -52,3 +52,4 @@ runs/
 .DS_Store
 Thumbs.db
 
+experiments/scenario3_category/processed_arrays/X_train.npy
