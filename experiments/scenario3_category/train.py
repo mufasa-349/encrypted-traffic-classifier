@@ -28,18 +28,21 @@ class NPDataset(Dataset):
 
 
 class MLP(nn.Module):
-    def __init__(self, in_dim: int, num_classes: int = 6, p: float = 0.3):
+    def __init__(self, in_dim: int, num_classes: int = 6, p: float = 0.4):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(in_dim, 256),
+            nn.BatchNorm1d(256),  # Batch normalization eklendi
             nn.ReLU(),
             nn.Dropout(p),
             nn.Linear(256, 128),
+            nn.BatchNorm1d(128),  # Batch normalization eklendi
             nn.ReLU(),
             nn.Dropout(p),
             nn.Linear(128, 64),
+            nn.BatchNorm1d(64),  # Batch normalization eklendi
             nn.ReLU(),
-            nn.Dropout(p * 0.66),
+            nn.Dropout(p * 0.75),
             nn.Linear(64, num_classes),
         )
 
@@ -119,11 +122,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--artifacts-dir", type=str, default="artifacts", help="prepare_data çıktıları")
     parser.add_argument("--arrays-dir", type=str, default="processed_arrays", help="numpy X/y dizin")
+    parser.add_argument("--output-dir", type=str, default="", help="Checkpoint ve report çıktı dizini (boşsa default: checkpoints/ ve reports/)")
     parser.add_argument("--epochs", type=int, default=40)
     parser.add_argument("--batch-size", type=int, default=512)
-    parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--weight-decay", type=float, default=1e-5)
+    parser.add_argument("--lr", type=float, default=1e-4)  # Düşürüldü: 1e-3 -> 1e-4
+    parser.add_argument("--weight-decay", type=float, default=1e-4)  # Artırıldı: 1e-5 -> 1e-4
     parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--early-stopping", type=int, default=15, help="Patience for early stopping (0 = disabled)")
+    parser.add_argument("--normalize-weights", action="store_true", help="Normalize class weights (max=5.0)")
     args = parser.parse_args()
 
     art_dir = Path(args.artifacts_dir)
@@ -198,23 +204,60 @@ def main():
     print(f"  ✓ Model device: {next(model.parameters()).device}")
     
     print(f"\n⚖️  LOSS VE OPTIMIZER AYARLANIYOR...")
+    
+    # Class weights normalize et (çok aşırı olanları sınırla)
+    if args.normalize_weights:
+        max_weight = 5.0  # Maksimum weight (10'dan 5'e düşürüldü - daha dengeli)
+        normalized_weights = [min(w, max_weight) for w in class_weights]
+        print(f"  ⚠️  Class weights normalize ediliyor (max={max_weight})...")
+        print(f"  ✓ Normalize öncesi:")
+        for i, w in enumerate(class_weights):
+            print(f"      {int_to_str[i]:15s}: {w:.4f}")
+        print(f"  ✓ Normalize sonrası:")
+        for i, w in enumerate(normalized_weights):
+            print(f"      {int_to_str[i]:15s}: {w:.4f}")
+        class_weights = normalized_weights
+    else:
+        print(f"  ✓ Class weights (normalize edilmedi):")
+        for i, w in enumerate(class_weights):
+            print(f"      {int_to_str[i]:15s}: {w:.4f}")
+    
     weight_tensor = torch.tensor(class_weights, dtype=torch.float32, device=device)
-    print(f"  ✓ Class weights:")
-    for i, w in enumerate(class_weights):
-        print(f"      {int_to_str[i]:15s}: {w:.4f}")
     criterion = nn.CrossEntropyLoss(weight=weight_tensor)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    
+    # Learning rate scheduler ekle
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='max', factor=0.5, patience=3, min_lr=1e-6
+    )
+    
     print(f"  ✓ Loss: Weighted CrossEntropyLoss")
     print(f"  ✓ Optimizer: Adam (lr={args.lr}, weight_decay={args.weight_decay})")
+    print(f"  ✓ Scheduler: ReduceLROnPlateau (patience=3, factor=0.5)")
 
     best_acc = 0.0
     best_epoch = 0
-    ckpt_dir = Path("checkpoints")
+    patience_counter = 0
+    
+    # Output dizinleri (paralel çalıştırma için)
+    if args.output_dir:
+        output_base = Path(args.output_dir)
+        ckpt_dir = output_base / "checkpoints"
+        reports_dir = output_base / "reports"
+    else:
+        ckpt_dir = Path("checkpoints")
+        reports_dir = Path("reports")
+    
     ckpt_dir.mkdir(parents=True, exist_ok=True)
+    reports_dir.mkdir(parents=True, exist_ok=True)
     
     print(f"\n" + "=" * 70)
     print("EĞİTİM BAŞLIYOR...")
     print("=" * 70)
+    if args.early_stopping > 0:
+        print(f"⏰ Early stopping aktif: {args.early_stopping} epoch patience")
+    else:
+        print(f"⏰ Early stopping devre dışı - tüm epoch'lar eğitilecek")
 
     for epoch in range(1, args.epochs + 1):
         print(f"\n{'─' * 70}")
@@ -232,15 +275,34 @@ def main():
         acc = (y_true == y_pred).mean()
         print(f"[TEST]  Epoch {epoch} tamamlandı - Accuracy: {acc*100:.2f}%")
         
+        # Learning rate scheduler update
+        old_lr = optimizer.param_groups[0]['lr']
+        scheduler.step(acc)
+        current_lr = optimizer.param_groups[0]['lr']
+        if current_lr < old_lr:
+            print(f"  📉 Learning rate azaltıldı: {old_lr:.6f} → {current_lr:.6f}")
+        elif epoch > 1:
+            print(f"  📉 Learning rate: {current_lr:.6f}")
+        
         # En iyi modeli kaydet
         if acc > best_acc:
             best_acc = acc
             best_epoch = epoch
+            patience_counter = 0  # Reset patience
             torch.save(model.state_dict(), ckpt_dir / "model.pt")
             print(f"  ⭐ YENİ EN İYİ MODEL! Accuracy: {best_acc*100:.2f}% (Epoch {best_epoch})")
             print(f"  💾 Model kaydedildi: {ckpt_dir / 'model.pt'}")
         else:
+            patience_counter += 1
             print(f"  📊 Mevcut en iyi: {best_acc*100:.2f}% (Epoch {best_epoch})")
+            if args.early_stopping > 0:
+                print(f"  ⏰ Patience: {patience_counter}/{args.early_stopping}")
+        
+        # Early stopping kontrolü
+        if args.early_stopping > 0 and patience_counter >= args.early_stopping:
+            print(f"\n⏹️  EARLY STOPPING! {args.early_stopping} epoch boyunca iyileşme olmadı.")
+            print(f"   En iyi model: Epoch {best_epoch} - Accuracy: {best_acc*100:.2f}%")
+            break
 
     print(f"\n" + "=" * 70)
     print("EĞİTİM TAMAMLANDI!")
@@ -259,12 +321,18 @@ def main():
 
     # Rapor
     print(f"\n📝 DETAYLI RAPOR OLUŞTURULUYOR...")
-    target_names = [int_to_str[i] for i in sorted(int_to_str.keys())]
-    report = classification_report(y_true, y_pred, target_names=target_names, digits=4)
-    cm = confusion_matrix(y_true, y_pred)
     
-    reports_dir = Path("reports")
-    reports_dir.mkdir(parents=True, exist_ok=True)
+    # Test setinde bulunan sınıfları belirle
+    unique_labels = np.unique(np.concatenate([y_true, y_pred]))
+    target_names = [int_to_str[i] for i in sorted(unique_labels)]
+    labels = sorted(unique_labels)
+    
+    # Tüm sınıfları içeren confusion matrix için
+    all_labels = sorted(int_to_str.keys())
+    cm = confusion_matrix(y_true, y_pred, labels=all_labels)
+    
+    # Sadece test setinde bulunan sınıflar için rapor
+    report = classification_report(y_true, y_pred, labels=labels, target_names=target_names, digits=4, zero_division=0)
     
     with open(reports_dir / "classification_report.txt", "w") as f:
         f.write("SENARYO 3: 6 SINIFLI MLP - DETAYLI RAPOR\n")

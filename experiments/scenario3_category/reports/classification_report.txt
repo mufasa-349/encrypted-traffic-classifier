@@ -1,0 +1,24 @@
+SENARYO 3: 6 SINIFLI MLP - DETAYLI RAPOR
+======================================================================
+
+En iyi model: Epoch 11
+Final Accuracy: 29.16%
+
+              precision    recall  f1-score   support
+
+      BENIGN     0.7545    0.2239    0.3454     97686
+    DOS_DDOS     0.8477    0.3432    0.4886    128025
+       RECON     0.0000    0.0000    0.0000         0
+
+    accuracy                         0.2916    225711
+   macro avg     0.5341    0.1890    0.2780    225711
+weighted avg     0.8074    0.2916    0.4266    225711
+
+
+Confusion Matrix:
+[[21876     0  7894     0 67916     0]
+ [    0     0     0     0     0     0]
+ [ 7118     0 43934     0 76973     0]
+ [    0     0     0     0     0     0]
+ [    0     0     0     0     0     0]
+ [    0     0     0     0     0     0]]

@@ -14,7 +14,7 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.utils.class_weight import compute_class_weight
 
 
@@ -149,11 +149,17 @@ def compute_weights(y_encoded: np.ndarray, num_classes: int) -> List[float]:
     return weights
 
 
-def save_artifacts(out_dir: Path, scaler: StandardScaler, class_weights: List[float],
+def save_artifacts(out_dir: Path, scaler, class_weights: List[float],
                    feature_names: List[str], label_maps: Dict[str, Dict]):
     out_dir.mkdir(parents=True, exist_ok=True)
-    np.save(out_dir / "scaler_mean.npy", scaler.mean_)
-    np.save(out_dir / "scaler_scale.npy", scaler.scale_)
+    # RobustScaler için center_ ve scale_ kullan
+    if hasattr(scaler, 'center_'):
+        np.save(out_dir / "scaler_mean.npy", scaler.center_)  # RobustScaler'da median
+        np.save(out_dir / "scaler_scale.npy", scaler.scale_)  # RobustScaler'da IQR
+    else:
+        # StandardScaler için geriye dönük uyumluluk
+        np.save(out_dir / "scaler_mean.npy", scaler.mean_)
+        np.save(out_dir / "scaler_scale.npy", scaler.scale_)
 
     with open(out_dir / "class_weights.json", "w") as f:
         json.dump(class_weights, f, indent=2)
@@ -196,11 +202,12 @@ def main():
     y_train, str_to_int, int_to_str = encode_labels(y_train_raw)
     y_test = np.array([str_to_int[c] for c in y_test_raw], dtype=np.int64)
 
-    # Scale
-    scaler = StandardScaler()
+    # Scale - RobustScaler kullan (outlier'lara daha dayanıklı, train/test dağılım farklarını azaltır)
+    # StandardScaler yerine RobustScaler: median ve IQR kullanır (mean/std yerine)
+    scaler = RobustScaler()
     X_train = scaler.fit_transform(X_train)
     X_test = scaler.transform(X_test)
-    print("[SCALE] StandardScaler fit/train -> transform/test")
+    print("[SCALE] RobustScaler fit/train -> transform/test (outlier-resistant)")
 
     # Class weights
     class_weights = compute_weights(y_train, num_classes=len(str_to_int))
