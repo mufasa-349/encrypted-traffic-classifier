@@ -53,3 +53,5 @@ runs/
 Thumbs.db
 
 experiments/scenario3_category/processed_arrays/X_train.npy
+experiments/port_category/processed_arrays/X_test.npy
+experiments/port_category/processed_arrays/X_train.npy
