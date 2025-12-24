@@ -1,0 +1,21 @@
+DESTINATION PORT CATEGORY: 3 SINIFLI MLP - DETAYLI RAPOR
+======================================================================
+
+En iyi model: Epoch 12
+Final Accuracy: 79.42%
+
+              precision    recall  f1-score   support
+
+  WELL_KNOWN     0.9989    0.8044    0.8912    314285
+  REGISTERED     0.6674    0.9459    0.7826    147782
+     DYNAMIC     0.2814    0.2787    0.2800     49740
+
+    accuracy                         0.7942    511807
+   macro avg     0.6492    0.6763    0.6513    511807
+weighted avg     0.8335    0.7942    0.8004    511807
+
+
+Confusion Matrix:
+[[252821  33818  27646]
+ [   241 139790   7751]
+ [    34  35845  13861]]
